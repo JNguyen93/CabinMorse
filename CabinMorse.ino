@@ -1,3 +1,4 @@
+
 #include <SoftwareSerial.h>
 #include <Bounce2.h>
 
@@ -21,7 +22,7 @@ int latchPin = 8;
 int clockPin = 12;
 ////Pin connected to DS of 74HC595
 int dataPin = 11;
-
+const int backspace = 6;
 SoftwareSerial LCD(9, 10); // Arduino SS_RX = pin 9 (unused), Arduino SS_TX = pin 10 
 
 int dotFive = 2;
@@ -42,8 +43,11 @@ int inputSignalIndex = 0;                // Index into the input signal buffer
 int sosIndex = 0;
 boolean help;
 boolean correct;
+boolean confirmed = false;
+boolean coordinates = false;
 
 Bounce morse0 = Bounce();
+Bounce backButton = Bounce();
 
 void resetInputSignal() {                // Reset the input signal buffer and index
   inputSignal[0] = NONE;
@@ -54,6 +58,11 @@ void resetInputSignal() {                // Reset the input signal buffer and in
   inputSignalIndex = 0;
 }
 
+void LCDClear(){
+  LCD.write(0xFE);
+  LCD.write(0x01);
+}
+
 void setup() {
   pinMode(LED, OUTPUT);                  // Set the LED output
   pinMode(BUTTON, INPUT_PULLUP);                // Set the button input
@@ -61,6 +70,7 @@ void setup() {
   pinMode(latchPin, OUTPUT);
   pinMode(dotFive, OUTPUT);
   pinMode(dashFive, OUTPUT);
+  pinMode(backspace, INPUT_PULLUP);
   digitalWrite(LED, LOW);                // Turn off the LED
   digitalWrite(MAGLOCK, HIGH);
   digitalWrite(dotFive, LOW);
@@ -70,15 +80,16 @@ void setup() {
   resetInputSignal();                    // Reset input signal buffer
   morse0.attach(BUTTON);
   morse0.interval(50);
-  answer[0] = 'S';
-  answer[1] = 'O';
-  answer[2] = 'S';
-  answer[3] = 'O';
+  backButton.attach(backspace);
+  backButton.interval(50);
+  answer[0] = '2';
+  answer[1] = '2';
+  answer[2] = '1';
+  answer[3] = '7';
   sosAnswer[0] = 'S';
   sosAnswer[1] = 'O';
   sosAnswer[2] = 'S';
-  LCD.write(0xFE);
-  LCD.write(0x01);
+  LCDClear();
   LCD.write(0xFE);
   LCD.write(0x0D);
 }
@@ -130,6 +141,12 @@ char currentInputSignalToLetter() {
   if (matchInputSignal(DASH, DASH, DASH, DOT, DOT))   { return '8'; }
   if (matchInputSignal(DASH, DASH, DASH, DASH, DOT))  { return '9'; }
   if (matchInputSignal(DASH, DASH, DASH, DASH, DASH)) { return '0'; }
+  if (matchInputSignal(DOT, DASH, DOT, DASH, DASH))   { return '1'; }
+  if (matchInputSignal(DOT, DASH, DASH, DOT, DASH))   { return '1'; }
+  if (matchInputSignal(DOT, DASH, DASH, DASH, DOT))   { return '1'; }
+  if (matchInputSignal(DOT, DASH, DOT, DOT, DASH))    { return '1'; }
+  if (matchInputSignal(DOT, DASH, DASH, DOT, DOT))    { return '1'; }
+  if (matchInputSignal(DOT, DASH, DOT, DOT, DOT))     { return '1'; }
   return '?';
 }
 
@@ -273,9 +290,34 @@ void shiftOut(int myDataPin, int myClockPin, byte myDataOut) {
   digitalWrite(myClockPin, 0);
 }
 
+void LCDbackspace(int* index){
+  Serial.print("Index: ");
+  Serial.println(*index);
+  if(*index > 0){
+    LCD.print("\b");
+    /*LCD.write(0xFE);
+    LCD.write(0x10);
+    LCD.print(" ");
+    LCD.write(0xFE);
+    LCD.write(0x10);*/
+    *index = *index - 1;
+    Serial.print("Index: ");
+    Serial.println(*index);
+  }
+}
+
 void loop() {
   long currentTimestamp  = millis(); // get the current timestamp
   long duration = currentTimestamp - lastTimestamp; // get elapsed time
+  backButton.update();
+  if(backButton.fell()){
+    if(!help){
+      LCDbackspace(&sosIndex);
+    }
+    if(help && !correct){
+      LCDbackspace(&combinationIndex);
+    }
+  }
   morse0.update();
   if (morse0.fell()) { // if the button is pressed
     if (!buttonWasPressed) { //  if the button was previously not pressed
@@ -302,7 +344,7 @@ void loop() {
     } else { // the button was not just released
       if (inputSignalIndex > 0) { // if there is data in the input signal buffer
         if(millis() - lastOutput > SIGNAL_GAP){
-            Serial.print(currentInputSignalToLetter());
+            //Serial.print(currentInputSignalToLetter());
             //Serial.write(0xFE);
             //Serial.write(0x10);
             lastOutput = millis();
@@ -337,7 +379,7 @@ void loop() {
             }
             feedback = 0;
           }
-          
+          //Serial.println(help);
           if(!help){
             sos[sosIndex] = currentInputSignalToLetter();
             if(sosIndex < 2 && sosIndex >= 0){
@@ -355,22 +397,30 @@ void loop() {
               }
               Serial.println();
               sosIndex = 0;
-              LCD.write(0xFE);
-              LCD.write(0x01);
+              delay(500);
+              LCDClear();
             }
             if(help){
+                LCD.print("...");
                 delay(2000);
-                LCD.write(0xFE);
-                LCD.write(0x01);
+                LCDClear();
                 LCD.print("We've received your SOS. Please enter your coordinates.");
-                delay(3000);
-                LCD.write(0xFE);
-                LCD.write(0x01);
+                delay(5000);
+                LCDClear();
+                LCD.print("Coordinates: ");
              }
           }
 
           else{
+            Serial.println(combinationIndex);
             combination[combinationIndex] = currentInputSignalToLetter();
+            /*if(combinationIndex > 0 && !confirmed){
+                LCD.write(0xFE);
+                LCD.write(0x01);
+                LCD.print("Coordinates: ");
+                confirmed = true;
+                combinationIndex = 0; 
+            }*/
             if(combinationIndex < 3 && combinationIndex >= 0){
               combinationIndex++;
             }
@@ -378,22 +428,31 @@ void loop() {
               correct = true;
               Serial.println();
               for(int i = 0; i < 4; i++){
-                Serial.print(combination[i]);
+                //Serial.print(combination[i]);
+                //Serial.print(" equals ");
+                //Serial.println(answer[i]);
                 if(combination[i] != answer[i]){
                   correct = false;
+                  //Serial.println(correct);
                   //break;
                 }
               }
               Serial.println();
+              delay(500);
+              LCDClear();
+              LCD.print("Coordinates: ");
               combinationIndex = 0;
-              LCD.write(0xFE);
-              LCD.write(0x01);
             }
             if(correct){
               delay(2000);
-              LCD.write(0xFE);
-              LCD.write(0x01);
+              LCDClear();
               LCD.print("Rescue teams are on their way.");
+              delay(3000);
+              LCDClear();
+              LCD.print("...");
+              delay(3000);
+              LCDClear();
+              LCD.print("It looks like the exit has been snowed in. 'Breakout' using another exit.");
               digitalWrite(MAGLOCK, LOW);
               while(1){}
             }
